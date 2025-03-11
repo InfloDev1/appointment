@@ -1,0 +1,18 @@
+{
+  "name": "dripper-scheduler",
+  "type": "webapp",
+  "runtime": {
+    "name": "node",
+    "version": "18-lts"
+  },
+  "build": {
+    "command": "npm run build",
+    "output": ".next"
+  },
+  "start": {
+    "command": "npm start"
+  },
+  "env": {
+    "NODE_ENV": "production"
+  }
+} 

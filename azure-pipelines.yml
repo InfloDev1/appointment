@@ -1,0 +1,93 @@
+trigger:
+  - main
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  NODE_VERSION: '18.x'
+  AZURE_WEBAPP_NAME: 'dripper-scheduler'
+  CUSTOM_DOMAIN: 'book.dripper.live'
+
+stages:
+- stage: Build
+  displayName: Build stage
+  jobs:
+  - job: Build
+    displayName: Build
+    steps:
+    - task: NodeTool@0
+      inputs:
+        versionSpec: $(NODE_VERSION)
+      displayName: 'Install Node.js'
+
+    - script: |
+        npm install --legacy-peer-deps
+      displayName: 'npm install'
+
+    - script: |
+        npm run build
+      displayName: 'npm build'
+      env:
+        OPENAI_API_KEY: $(OPENAI_API_KEY)
+        ANTHROPIC_API_KEY: $(ANTHROPIC_API_KEY)
+        REPLICATE_API_KEY: $(REPLICATE_API_KEY)
+        DEEPGRAM_API_KEY: $(DEEPGRAM_API_KEY)
+        NEXT_PUBLIC_FIREBASE_API_KEY: $(NEXT_PUBLIC_FIREBASE_API_KEY)
+        NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: $(NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN)
+        NEXT_PUBLIC_FIREBASE_PROJECT_ID: $(NEXT_PUBLIC_FIREBASE_PROJECT_ID)
+        NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET: $(NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET)
+        NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: $(NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID)
+        NEXT_PUBLIC_FIREBASE_APP_ID: $(NEXT_PUBLIC_FIREBASE_APP_ID)
+        NEXT_PUBLIC_SITE_URL: 'https://$(CUSTOM_DOMAIN)'
+
+    - task: ArchiveFiles@2
+      inputs:
+        rootFolderOrFile: '$(System.DefaultWorkingDirectory)'
+        includeRootFolder: false
+        archiveType: 'zip'
+        archiveFile: '$(Build.ArtifactStagingDirectory)/$(Build.BuildId).zip'
+        replaceExistingArchive: true
+
+    - task: PublishBuildArtifacts@1
+      inputs:
+        PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+        ArtifactName: 'drop'
+        publishLocation: 'Container'
+
+- stage: Deploy
+  displayName: Deploy stage
+  dependsOn: Build
+  condition: succeededOrFailed()
+  jobs:
+  - deployment: Deploy
+    displayName: Deploy to Azure
+    environment: 'production'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: AzureWebApp@1
+            inputs:
+              azureSubscription: 'Azure subscription 1'
+              appName: $(AZURE_WEBAPP_NAME)
+              slotName: 'production'
+              package: '$(Pipeline.Workspace)/drop/$(Build.BuildId).zip'
+
+          - task: AzureCLI@2
+            inputs:
+              azureSubscription: 'Azure subscription 1'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                # Get the web app resource ID
+                WEBAPP_ID=$(az webapp show --name $(AZURE_WEBAPP_NAME) --resource-group dripper-scheduler-rg --query id --output tsv)
+                
+                # Add custom domain
+                az webapp config hostname add --webapp-name $(AZURE_WEBAPP_NAME) --resource-group dripper-scheduler-rg --hostname $(CUSTOM_DOMAIN)
+                
+                # Enable HTTPS
+                az webapp config ssl bind --webapp-name $(AZURE_WEBAPP_NAME) --resource-group dripper-scheduler-rg --certificate-thumbprint $(SSL_CERTIFICATE_THUMBPRINT)
+                
+                # Configure custom domain settings
+                az webapp config set --name $(AZURE_WEBAPP_NAME) --resource-group dripper-scheduler-rg --custom-domain-verification-id $(CUSTOM_DOMAIN_VERIFICATION_ID) 
